@@ -1,0 +1,541 @@
+#!/usr/bin/env python3
+
+import argparse
+import asyncio
+import grpc
+import socket
+import sys
+from typing import List, Optional
+from zeroconf import ServiceInfo
+
+from google.protobuf.empty_pb2 import Empty
+from speaker import system_pb2, system_pb2_grpc
+from speaker.discovery import DiscoveryClient
+from speaker.device import ZEROCONF_SERVICE_NAME
+
+
+# Custom formatter to improve help formatting
+# https://stackoverflow.com/questions/13423540/argparse-subparser-hide-metavar-in-command-listing
+class SubcommandHelpFormatter(argparse.RawDescriptionHelpFormatter):
+    def _format_action(self, action):
+        parts = super(argparse.RawDescriptionHelpFormatter,
+                      self)._format_action(action)
+        if action.nargs == argparse.PARSER:
+            parts = '\n'.join(parts.split('\n')[1:])
+        return parts
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='Manage speaker devices in the local network.',
+        formatter_class=SubcommandHelpFormatter)
+
+    # Common options
+    group = parser.add_argument_group('general options')
+    group.add_argument(
+        '-t', '--timeout', type=float,
+        help='set initial device discovery timeout in seconds')
+
+    commands = parser.add_subparsers(
+        title='commands', dest='command', metavar='<command>')
+
+    # General commands
+    cparser = commands.add_parser(
+        'info',
+        help='query information about a device')
+    cparser.add_argument(
+        'device', type=str,
+        help='name or UUID of the device')
+
+    cparser = commands.add_parser(
+        'list',
+        help='list all devices visible on the local network')
+    cparser.add_argument(
+        '-i', '--info', action='store_true',
+        help='print detailed information about each device')
+
+    cparser = commands.add_parser(
+        'name',
+        help='change the name of a device')
+    cparser.add_argument(
+        'device', type=str, nargs='?',
+        help='current name or UUID of the device')
+    cparser.add_argument(
+        'name', type=str,
+        help='the new name of the device')
+
+    # Speaker commands
+    cparser = commands.add_parser(
+        'mute',
+        help='mute a device')
+    cparser.add_argument(
+        'device', type=str, nargs='?',
+        help='name or UUID of the device')
+    cparser = commands.add_parser(
+        'unmute',
+        help='unmute a device')
+    cparser.add_argument(
+        'device', type=str, nargs='?',
+        help='name or UUID of the device')
+    cparser = commands.add_parser(
+        'volume',
+        help='change the volume of a device')
+    cparser.add_argument(
+        'volume', type=float,
+        help='set speaker volume [0.0 - 1.0]')
+    cparser.add_argument(
+        'device', type=str, nargs='?',
+        help='name or UUID of the device')
+
+    # Player commands
+    cparser = commands.add_parser(
+        'play',
+        help='start a player for the given URI on a device')
+    cparser.add_argument(
+        'uri', type=str, nargs='?',
+        help='URI to play (use currently loaded URI when omitted)')
+    cparser.add_argument(
+        'device', type=str, nargs='?',
+        help='name or UUID of the device')
+
+    cparser = commands.add_parser(
+        'stop',
+        help='stop the player running on a device')
+    cparser.add_argument(
+        'device', type=str, nargs='?',
+        help='name or UUID of the device')
+
+    # Connecting and disconnecting RTP streams
+    cparser = commands.add_parser(
+        'connect',
+        help='connect audio inputs from source devices to a speaker')
+    cparser.add_argument(
+        'speaker', type=str,
+        help='name or UUID of the speaker device')
+    cparser.add_argument(
+        'source', type=str, nargs='+',
+        help='name or UUID of a source device')
+
+    cparser = commands.add_parser(
+        'disconnect',
+        help='disconnect chosen source devices from a speaker')
+    cparser.add_argument(
+        'speaker', type=str,
+        help='name or UUID of the speaker device')
+    cparser.add_argument(
+        'source', type=str, nargs='+',
+        help='name or UUID of a source device')
+
+    cparser = commands.add_parser(
+        'disconnect-all',
+        help='disconnect all source devices from a speaker')
+    cparser.add_argument(
+        'speaker', type=str,
+        help='name or UUID of the speaker device')
+
+    # Spotify commands
+    cparser = commands.add_parser(
+        'spotify-bitrate',
+        help='set bitrate of a Spotify player')
+    cparser.add_argument(
+        'bitrate', type=int,
+        help='bitrate in kbps (96, 160 or 320)')
+    cparser.add_argument(
+        'device', type=str, nargs='?',
+        help='name or UUID of the device')
+    cparser.add_argument(
+        '-a', '--all-devices', action='store_true',
+        help='set the bitrate on all visible devices')
+
+    cparser = commands.add_parser(
+        'spotify-creds',
+        help='set user credentials of a Spotify player')
+    cparser.add_argument(
+        'username', type=str,
+        help='user name or e-mail')
+    cparser.add_argument(
+        'password', type=str,
+        help='user password')
+    cparser.add_argument(
+        'device', type=str, nargs='?',
+        help='name or UUID of a device')
+    cparser.add_argument(
+        '-a', '--all-devices', action='store_true',
+        help='set credentials for all visible devices')
+
+    cparser = commands.add_parser(
+        'spotify-start',
+        help='start Spotify client on a device')
+    cparser.add_argument(
+        'device', type=str, nargs='?',
+        help='name or UUID of the device')
+
+    cparser = commands.add_parser(
+        'spotify-stop',
+        help='stop Spotify client on a device')
+    cparser.add_argument(
+        'device', type=str, nargs='?',
+        help='name or UUID of the device')
+
+    return parser.parse_args()
+
+
+class Discovery:
+    def __init__(self) -> None:
+        self._zero_client = DiscoveryClient(ZEROCONF_SERVICE_NAME)
+        self._zero_client.on('service-added', self._zero_added)
+        self._zero_client.on('service-removed', self._zero_removed)
+
+    async def run(self, timeout=0.1) -> None:
+        self.devices = set()
+        self._zero_client.start()
+        await asyncio.sleep(timeout)
+        self._zero_client.stop()
+
+    def _zero_added(self, info: ServiceInfo) -> None:
+        host = self._service_info_to_host_pair(info)
+        self.devices.add(host)
+
+    def _zero_removed(self, info: ServiceInfo) -> None:
+        host = self._service_info_to_host_pair(info)
+        self.devices.remove(host)
+
+    @staticmethod
+    def _service_info_to_host_pair(info: ServiceInfo) -> str:
+        host = socket.inet_ntop(
+            socket.AF_INET,
+            info.addresses[0])
+        return '{}:{}'.format(host, info.port)
+
+
+class Cli:
+    def __init__(self, args) -> None:
+        self.args = args
+
+    async def run(self) -> bool:
+        func = getattr(self, self.args.command.replace('-', '_'), None)
+        if func:
+            discovery = Discovery()
+            if self.args.timeout:
+                await discovery.run(timeout=self.args.timeout)
+            else:
+                await discovery.run()
+            self.devices = discovery.devices
+            func()
+            return True
+        if not func:
+            print(f'Command {self.args.command} is not implemented')
+            return False
+
+    @staticmethod
+    def _grpc_channel(device: str):
+        return grpc.insecure_channel(device)
+
+    def _get_device_channel_info(self, device: str):
+        channel = self._grpc_channel(device)
+        stub = system_pb2_grpc.DeviceStub(channel)
+        return channel, stub.GetInfo(Empty())
+
+    def _filter_device(self, wanted: Optional[str], report_err: bool = True):
+        if wanted is None:
+            if len(self.devices) == 1:
+                device = next(iter(self.devices))
+                channel, info = self._get_device_channel_info(device)
+                return device, channel, info
+            if report_err:
+                print('There are multiple devices available, choose one')
+            return None, None, None
+        wfolded = wanted.casefold()
+        for device in self.devices:
+            channel, info = self._get_device_channel_info(device)
+            if info.ident.casefold() == wfolded or info.name.casefold() == wfolded:
+                return device, channel, info
+        if report_err:
+            print(f'Device {wanted} not found')
+        return None, None, None
+
+    def info(self) -> None:
+        _, channel, info = self._filter_device(self.args.device)
+        if channel:
+            self._print_info(channel, info)
+
+    def list(self) -> None:
+        for device in self.devices:
+            channel, info = self._get_device_channel_info(device)
+            if self.args.info:
+                self._print_info(channel, info)
+            else:
+                print(f'{info.ident}: {info.name}')
+
+    def name(self) -> None:
+        device, channel, _ = self._filter_device(self.args.device)
+        if not device:
+            return
+        # Change the device name
+        stub = system_pb2_grpc.DeviceStub(channel)
+        response = stub.SetName(system_pb2.DeviceName(name=self.args.name))
+        if not response.ok:
+            print(f'{device}: {response.error}')
+            return
+        # Change the spotify name
+        stub = system_pb2_grpc.SpotifyStub(channel)
+        response = stub.SetName(system_pb2.SpotifyOptName(name=self.args.name))
+        if response.ok:
+            print('OK')
+        else:
+            print(f'{device}: {response.error}')
+
+    def mute(self) -> None:
+        device, channel, _ = self._filter_device(self.args.device)
+        if not device:
+            return
+        stub = system_pb2_grpc.SpeakerStub(channel)
+        response = stub.SetMute(system_pb2.MuteValue(value=True))
+        if response.ok:
+            print('OK')
+        else:
+            print(f'{device}: {response.error}')
+
+    def unmute(self) -> None:
+        device, channel, _ = self._filter_device(self.args.device)
+        if not device:
+            return
+        stub = system_pb2_grpc.SpeakerStub(channel)
+        response = stub.SetMute(system_pb2.MuteValue(value=False))
+        if response.ok:
+            print('OK')
+        else:
+            print(f'{device}: {response.error}')
+
+    def volume(self) -> None:
+        device, channel, _ = self._filter_device(self.args.device)
+        if not device:
+            return
+        stub = system_pb2_grpc.SpeakerStub(channel)
+        response = stub.SetVolumeUniform(
+            system_pb2.VolumeSingleValue(value=self.args.volume))
+        if response.ok:
+            print('OK')
+        else:
+            print(f'{device}: {response.error}')
+
+    def play(self) -> None:
+        device, channel, _ = self._filter_device(self.args.device)
+        if not device:
+            return
+        stub = system_pb2_grpc.PlayerStub(channel)
+        rqst = system_pb2.PlayerLocation()
+        # Play the current location if there is one stored in the device
+        if not getattr(self.args, 'uri'):
+            status = stub.GetStatus(Empty())
+            if not status.location:
+                print("Pass a URI, there isn't one loaded on the device")
+                return
+            print(f'Keeping current URI: {status.location}')
+            rqst.location = status.location
+        else:
+            rqst.location = self.args.uri
+        response = stub.SetLocation(rqst)
+        if not response.ok:
+            print(f'{device}: {response.error}')
+            return
+        response = stub.Start(Empty())
+        if response.ok:
+            print('OK')
+        else:
+            print(f'{device}: {response.error}')
+
+    def stop(self) -> None:
+        device, channel, _ = self._filter_device(self.args.device)
+        if not device:
+            return
+        stub = system_pb2_grpc.PlayerStub(channel)
+        response = stub.Stop(Empty())
+        if response.ok:
+            print('OK')
+        else:
+            print(f'{device}: {response.error}')
+
+    def connect(self) -> None:
+        device, channel, _ = self._filter_device(self.args.speaker)
+        if not device:
+            return
+        sources = []
+        for src in self.args.source:
+            host, _, _ = self._filter_device(src)
+            if not host:
+                return
+            sources.append(host)
+
+        stub = system_pb2_grpc.SpeakerStub(channel)
+        response = stub.ConnectStreams(
+            (system_pb2.ServerHost(host=host) for host in sources))
+        if response.ok:
+            print('OK')
+        else:
+            print(f'{device}: {response.error}')
+
+    def disconnect(self) -> None:
+        device, channel, _ = self._filter_device(self.args.speaker)
+        if not device:
+            return
+        sources = []
+        for src in self.args.source:
+            _, _, info = self._filter_device(src)
+            if not info:
+                return
+            # Unlike connect(), disconnect() uses device idents
+            sources.append(info.ident)
+
+        stub = system_pb2_grpc.SpeakerStub(channel)
+        response = stub.DisconnectStreams(
+            (system_pb2.ServerIdent(ident=ident) for ident in sources))
+        if response.ok:
+            print('OK')
+        else:
+            print(f'{device}: {response.error}')
+
+    def disconnect_all(self) -> None:
+        device, channel, _ = self._filter_device(self.args.speaker)
+        if not device:
+            return
+        stub = system_pb2_grpc.SpeakerStub(channel)
+        response = stub.DisconnectAllStreams(Empty())
+        if response.ok:
+            print('OK')
+        else:
+            print(f'{device}: {response.error}')
+
+    def spotify_bitrate(self) -> None:
+        if self.args.bitrate == 96:
+            bitrate = system_pb2.SpotifyBitRate.BITRATE_96
+        elif self.args.bitrate == 160:
+            bitrate = system_pb2.SpotifyBitRate.BITRATE_160
+        elif self.args.bitrate == 320:
+            bitrate = system_pb2.SpotifyBitRate.BITRATE_320
+        else:
+            print(f'Invalid bitrate. Choose 96, 160 or 320.')
+            return
+        if self.args.all_devices:
+            devices = self.devices
+            if not devices:
+                print('There are no devices available')
+        else:
+            device, _, _ = self._filter_device(self.args.device)
+            devices = [device] if device else []
+        if not devices:
+            return
+
+        all_ok = True
+        for device in devices:
+            channel = self._grpc_channel(device)
+            stub = system_pb2_grpc.SpotifyStub(channel)
+            response = stub.SetBitRate(
+                system_pb2.SpotifyOptBitRate(bitrate=bitrate))
+            if not response.ok:
+                print(f'{device}: {response.error}')
+                all_ok = False
+        if all_ok:
+            print('OK')
+
+    def spotify_creds(self) -> None:
+        if self.args.all_devices:
+            devices = self.devices
+            if not devices:
+                print('There are no devices available')
+        else:
+            device, _, _ = self._filter_device(self.args.device)
+            devices = [device] if device else []
+        if not devices:
+            return
+
+        rqst = system_pb2.SpotifyCredentials(
+            username=self.args.username,
+            password=self.args.password)
+        all_ok = True
+        for device in devices:
+            channel = self._grpc_channel(device)
+            stub = system_pb2_grpc.SpotifyStub(channel)
+            response = stub.SetCredentials(rqst)
+            if not response.ok:
+                print(f'{device}: {response.error}')
+                all_ok = False
+        if all_ok:
+            print('OK')
+
+    def spotify_start(self) -> None:
+        device, channel, _ = self._filter_device(self.args.device)
+        if not device:
+            return
+        stub = system_pb2_grpc.SpotifyStub(channel)
+        response = stub.Start(Empty())
+        if response.ok:
+            print('OK')
+        else:
+            print(f'{device}: {response.error}')
+
+    def spotify_stop(self) -> None:
+        device, channel, _ = self._filter_device(self.args.device)
+        if not device:
+            return
+        stub = system_pb2_grpc.SpotifyStub(channel)
+        response = stub.Stop(Empty())
+        if response.ok:
+            print('OK')
+        else:
+            print(f'{device}: {response.error}')
+
+    def _print_info(self, channel, info) -> None:
+        print(f'{info.ident}: {info.name}')
+
+        stub = system_pb2_grpc.SpeakerStub(channel)
+        data = stub.GetStatus(Empty())
+        print(f' Speaker status:')
+        print(f'   Channels: {data.channels}')
+        print(f'   Volume:   {data.volume}')
+        print(f'   Mute:     {data.mute}')
+        data = stub.GetConnectedStreams(Empty())
+        print(f' Connected streams:')
+        for item in data:
+            print(f'   {item.ident}/{item.host}')
+
+        stub = system_pb2_grpc.PlayerStub(channel)
+        data = stub.GetStatus(Empty())
+        if data.status == system_pb2.PlayerStatus.Status.RUNNING:
+            status_text = 'Playing'
+        else:
+            status_text = 'Stopped'
+        print(f' Player:')
+        print(f'   Status:   {status_text}')
+        print(f'   Location: {data.location}')
+
+        stub = system_pb2_grpc.SpotifyStub(channel)
+        data = stub.GetStatus(Empty())
+        print(f' Spotify:')
+        if data.status == system_pb2.SpotifyStatus.Status.RUNNING:
+            status_text = 'Running'
+        else:
+            status_text = 'Stopped'
+        print(f'   Status:   {status_text}')
+        data = stub.GetOptions(Empty())
+        if data.bitrate == system_pb2.SpotifyBitRate.BITRATE_96:
+            bitrate = 96
+        elif data.bitrate == system_pb2.SpotifyBitRate.BITRATE_160:
+            bitrate = 160
+        else:
+            bitrate = 320
+        print(f'   Bitrate:  {bitrate}')
+        data = stub.GetCredentials(Empty())
+        print(f'   Username: {data.username}')
+
+
+async def main(args) -> None:
+    if not args.command:
+        print(f'No command given. Try {sys.argv[0]} -h')
+        return
+    cli = Cli(args)
+    await cli.run()
+
+
+if __name__ == '__main__':
+    asyncio.run(main(parse_args()))

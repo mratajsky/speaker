@@ -1,0 +1,157 @@
+syntax = "proto3";
+
+import "google/protobuf/empty.proto";
+
+service Device {
+    rpc GetInfo(google.protobuf.Empty) returns (DeviceInfo) {}
+    rpc SetName(DeviceName) returns (Result) {}
+}
+
+service Reader {
+    rpc GetInputList(google.protobuf.Empty) returns (stream InputInfo) {}
+    rpc GetStatus(google.protobuf.Empty) returns (ReaderStatus) {}
+    rpc SetMute(MuteValue) returns (Result) {}
+    rpc SetVolume(VolumeSingleValue) returns (Result) {}
+}
+
+service Speaker {
+    rpc GetConnectedStreams(google.protobuf.Empty) returns (stream SpeakerStreamInfo) {}
+    rpc GetStatus(google.protobuf.Empty) returns (SpeakerStatus) {}
+    rpc SetMute(MuteValue) returns (Result) {}
+    rpc SetVolume(VolumeValues) returns (Result) {}
+    rpc SetVolumeUniform(VolumeSingleValue) returns (Result) {}
+    rpc ConnectStreams(stream ServerHost) returns (Result) {}
+    rpc DisconnectStreams(stream ServerIdent) returns (Result) {}
+    rpc DisconnectAllStreams(google.protobuf.Empty) returns (Result) {}
+}
+
+service Player {
+    rpc GetStatus(google.protobuf.Empty) returns (PlayerStatus) {}
+    rpc Start(google.protobuf.Empty) returns (Result) {}
+    rpc Stop(google.protobuf.Empty) returns (Result) {}
+    rpc SetLocation(PlayerLocation) returns (Result) {}
+    rpc SetMute(MuteValue) returns (Result) {}
+    rpc SetVolume(VolumeSingleValue) returns (Result) {}
+}
+
+service Spotify {
+    rpc GetCredentials(google.protobuf.Empty) returns (SpotifyCredentials) {}
+    rpc GetOptions(google.protobuf.Empty) returns (SpotifyOptions) {}
+    rpc GetStatus(google.protobuf.Empty) returns (SpotifyStatus) {}
+    rpc Start(google.protobuf.Empty) returns (Result) {}
+    rpc Stop(google.protobuf.Empty) returns (Result) {}
+    rpc SetCredentials(SpotifyCredentials) returns (Result) {}
+    rpc SetBitRate(SpotifyOptBitRate) returns (Result) {}
+    rpc SetName(SpotifyOptName) returns (Result) {}
+}
+
+// Basic types
+message Result {
+    bool ok = 1;
+    string error = 2;
+}
+message MuteValue {
+    bool value = 1;
+}
+message VolumeValues {
+    repeated double value = 1;
+}
+message VolumeSingleValue {
+    double value = 1;
+}
+message ServerHost {
+    string host = 1;
+}
+message ServerIdent {
+    string ident = 1;
+}
+
+// Device types
+message DeviceName {
+    string name = 1;
+}
+message DeviceInfo {
+    string ident = 1;
+    string name = 2;
+}
+message InputInfo {
+    enum Status {
+        IDLE = 0;
+        INVALID = 1;
+        RUNNING = 2;
+        SUSPENDED = 3;
+    }
+    string name = 1;
+    string description = 2;
+    Status status = 3;
+    bool mute = 4;
+    repeated double volume = 5;
+    repeated string channels = 6;
+}
+
+// Reader types
+message ReaderStatus {
+    enum StreamStatus {
+        STOPPED = 0;
+        RUNNING = 1;
+    }
+    StreamStatus stream_status = 1;
+    string stream_location = 2;
+    bool mute = 3;
+    double volume = 4;
+}
+
+// Speaker types
+message SpeakerStatus {
+    bool mute = 1;
+    repeated double volume = 2;
+    repeated string channels = 3;
+}
+message SpeakerStreamInfo {
+    string ident = 1;
+    string host = 2;
+}
+
+// Player types
+message PlayerLocation {
+    string location = 1;
+}
+message PlayerStatus {
+    enum Status {
+        STOPPED = 0;
+        RUNNING = 1;
+    }
+    Status status = 1;
+    bool mute = 2;
+    double volume = 3;
+    string location = 4;
+    map<string, string> metadata = 5;
+}
+
+// Spotify types
+enum SpotifyBitRate {
+    BITRATE_96 = 0;
+    BITRATE_160 = 1;
+    BITRATE_320 = 2;
+}
+message SpotifyCredentials {
+    string username = 1;
+    string password = 2;
+}
+message SpotifyOptions {
+    SpotifyBitRate bitrate = 1;
+    string name = 2;
+}
+message SpotifyOptBitRate {
+    SpotifyBitRate bitrate = 1;
+}
+message SpotifyOptName {
+    string name = 1;
+}
+message SpotifyStatus {
+    enum Status {
+        STOPPED = 0;
+        RUNNING = 1;
+    }
+    Status status = 1;
+}
