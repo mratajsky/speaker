@@ -286,7 +286,9 @@ class GStreamerClient(EventEmitter):
         self._pipeline.set_state(Gst.State.PLAYING)
 
     def _stop(self) -> None:
-        self._pipeline.set_state(Gst.State.NULL)
+        ret = self._pipeline.set_state(Gst.State.NULL)
+        while ret == Gst.StateChangeReturn.ASYNC:
+            ret, _, _ = self._pipeline.get_state(Gst.CLOCK_TIME_NONE)
 
     def _build_stream(self, sink: Optional[str] = None) -> None:
         if sink:

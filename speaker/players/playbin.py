@@ -161,7 +161,9 @@ class Player(EventEmitter):
 
     def _stop(self) -> None:
         with self._gst_lock:
-            self._playbin.set_state(Gst.State.NULL)
+            ret = self._playbin.set_state(Gst.State.NULL)
+            while ret == Gst.StateChangeReturn.ASYNC:
+                ret, _, _ = self._playbin.get_state(Gst.CLOCK_TIME_NONE)
             self._running = False
 
     def _run_gstreamer(self) -> None:
