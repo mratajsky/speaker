@@ -69,11 +69,11 @@ class Spotify(EventEmitter):
 
     @property
     def spotifyd_opt_name(self) -> str:
-        return self._spotifyd_opts['device_name']
+        return self._spotifyd_opts['device-name']
 
     @spotifyd_opt_name.setter
     def spotifyd_opt_name(self, value: str) -> None:
-        self._spotifyd_opts['device_name'] = value
+        self._spotifyd_opts['device-name'] = value
 
     @property
     def running(self) -> bool:
