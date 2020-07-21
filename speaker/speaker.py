@@ -24,6 +24,9 @@ class Speaker:
         self._loopback_index = None
         self._running = False
 
+    def __del__(self):
+        self._gstreamer.stop()
+
     @property
     def running(self) -> bool:
         return self._running
@@ -61,7 +64,11 @@ class Speaker:
         if not self._gstreamer.running:
             self._gstreamer.start()
 
-        self._setup_pulseaudio()
+        try:
+            self._setup_pulseaudio()
+        except:
+            self._gstreamer.stop()
+            raise
         streams = self._db.hgetall('streams')
         for ident, host in streams.items():
             self.connect_stream(host.decode('utf-8'), ident.decode('utf-8'))

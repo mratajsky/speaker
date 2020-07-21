@@ -29,6 +29,7 @@ class Player(EventEmitter):
         self._restart_on_eos = True
         self._restart_on_error = True
         self._gst_thread = None
+        self._gst_lock = threading.Lock()
         self._meta = {}
         self._meta_title_tmp = {}
         self._meta_lock = threading.Lock()
@@ -54,6 +55,7 @@ class Player(EventEmitter):
         self.stop()
         self._gst_loop.quit()
         self._gst_thread.join()
+        self._gst_thread = None
 
     @property
     def location(self) -> str:
@@ -66,10 +68,7 @@ class Player(EventEmitter):
         self._location = location
         if self._running:
             self._stop()
-            self._playbin.set_property('uri', location)
             self._start()
-        else:
-            self._playbin.set_property('uri', location)
         self._emit('location-changed', location)
 
     @property
@@ -80,12 +79,10 @@ class Player(EventEmitter):
     def sink(self, sink_name: Optional[str]) -> None:
         if sink_name == self._sink_name:
             return
+        self._sink_name = sink_name
         if self._running:
             self._stop()
-            self._output.set_property('device', sink_name)
             self._start()
-        else:
-            self._output.set_property('device', sink_name)
         self._emit('sink-changed', sink_name)
 
     @property
@@ -133,6 +130,8 @@ class Player(EventEmitter):
         '''Start the player, location must already be set.'''
         if self._running:
             return
+        if not self._gst_thread:
+            raise RuntimeError('GStreamer thread has not been started')
         if not self._location:
             raise RuntimeError('Location not set')
 
@@ -142,10 +141,11 @@ class Player(EventEmitter):
 
     def stop(self) -> None:
         '''Stop the player.'''
-        if self._restart_source:
-            # If we're trying to restart a failed stream, stop doing it
-            self._restart_source.destroy()
-            self._restart_source = None
+        with self._gst_lock:
+            if self._restart_source:
+                # If we're trying to restart a failed stream, stop doing it
+                self._restart_source.destroy()
+                self._restart_source = None
         if not self._running:
             return
         logger.debug('Stopping playbin player')
@@ -154,6 +154,8 @@ class Player(EventEmitter):
 
     def _start(self) -> None:
         with self._gst_lock:
+            self._output.set_property('device', self._sink_name)
+            self._playbin.set_property('uri', self._location)
             self._playbin.set_state(Gst.State.PLAYING)
             self._running = True
 
@@ -168,15 +170,12 @@ class Player(EventEmitter):
         ctx = GLib.MainContext.new()
         ctx.push_thread_default()
         self._gst_loop = GLib.MainLoop(ctx)
-        self._gst_lock = threading.Lock()
 
         self._playbin = Gst.ElementFactory.make('playbin')
         self._fix_playbin_flags()
         # GStreamer output is always pulseaudio
         self._output = Gst.ElementFactory.make('pulsesink')
         self._playbin.set_property('audio-sink', self._output)
-        if self._sink_name:
-            self._output.set_property('device', self._sink_name)
 
         # Connect to the message bus to get event notifications
         bus = self._playbin.get_bus()
@@ -208,10 +207,11 @@ class Player(EventEmitter):
             self._start()
             return True
 
-        if not self._restart_source:
-            self._restart_source = GLib.timeout_source_new_seconds(2)
-            self._restart_source.set_callback(try_restart)
-            self._restart_source.attach(self._gst_loop.get_context())
+        with self._gst_lock:
+            if not self._restart_source:
+                self._restart_source = GLib.timeout_source_new_seconds(2)
+                self._restart_source.set_callback(try_restart)
+                self._restart_source.attach(self._gst_loop.get_context())
 
     def _on_bus_eos(self, _, message) -> None:
         logger.info('Stopping playbin player: end of stream')
@@ -238,9 +238,11 @@ class Player(EventEmitter):
         curr_name = Gst.Element.state_get_name(curr)
         logger.debug('Playbin pipeline state changed: %s -> %s',
                      prev_name, curr_name)
-        if curr_name == 'READY' and self._restart_source:
-            self._restart_source.destroy()
-            self._restart_source = None
+        if curr_name == 'READY':
+            with self._gst_lock:
+                if self._restart_source:
+                    self._restart_source.destroy()
+                    self._restart_source = None
 
         self._emit('state-changed', prev_name, curr_name)
 

@@ -65,6 +65,7 @@ class Device:
         except Exception:
             self._reader.stop()
             raise
+        self._player.start_gst_thread()
         self._start_server()
         self._running = True
 
@@ -73,6 +74,7 @@ class Device:
         if not self._running:
             return
         self._stop_server()
+        self._player.stop_gst_thread()
         self._speaker.stop()
         self._reader.stop()
         self._player.stop()
@@ -82,7 +84,6 @@ class Device:
 
     def _init_player(self) -> None:
         self._player = Player()
-        self._player.start_gst_thread()
         # Load the player settings
         db = get_database()
         self._player.location = db.get_str('playbin-location')

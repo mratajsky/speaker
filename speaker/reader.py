@@ -25,6 +25,9 @@ class Reader:
         self._stream_location = None
         self._running = False
 
+    def __del__(self):
+        self._gstreamer.stop()
+
     @property
     def running(self) -> bool:
         return self._running
@@ -68,7 +71,14 @@ class Reader:
         '''Start the reader service.'''
         if self._running:
             return
-        self._setup_pulseaudio()
+        if not self._gstreamer.running:
+            self._gstreamer.start()
+
+        try:
+            self._setup_pulseaudio()
+        except:
+            self._gstreamer.stop()
+            raise
         self._gstreamer.start_stream(self._null_monitor_name)
         self._running = True
 

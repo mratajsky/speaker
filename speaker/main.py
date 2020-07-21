@@ -45,7 +45,6 @@ async def main(args) -> None:
     try:
         await device.start()
     except Exception as e:
-        await device.stop()
         logger.exception(e)
         return
     logger.info('Speaker running, hit CTRL+C to quit')
