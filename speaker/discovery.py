@@ -6,15 +6,16 @@ from .utils import EventEmitter, get_logger
 
 logger = get_logger(__name__)
 
+_SERVICE_NAME = 'speaker'
 _SERVICE_TYPE = '_grpc._tcp.local.'
 
 
 class DiscoveryClient(EventEmitter):
     '''Zeroconf discovery client.'''
 
-    def __init__(self, name: str) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self._name = name + '.' + _SERVICE_TYPE
+        self._name = _SERVICE_NAME + '.' + _SERVICE_TYPE
         self._zeroconf = Zeroconf()
         self._listener = self.ServiceListener(self)
         self._browser = None
@@ -74,10 +75,10 @@ class DiscoveryClient(EventEmitter):
 class DiscoveryServer:
     '''Zeroconf discovery server.'''
 
-    def __init__(self, host: str, port: int, name: str) -> None:
+    def __init__(self, host: str, port: int) -> None:
         self._host = host
         self._port = port
-        self._name = name + '.' + _SERVICE_TYPE
+        self._name = _SERVICE_NAME + '.' + _SERVICE_TYPE
         self._zeroconf = None
         self._info = None
         self._registered = False

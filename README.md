@@ -23,6 +23,8 @@ Some features would be great to have in the future:
 
 The program, along with its Python dependencies, can be installed with `pip3 install .` in the main directory.
 
+To only install the CLI client with its smaller set of dependencies, use `CLI_ONLY=1 pip3 install .` instead.
+
 ## How to use
 
 Install the program on a Linux board equipped with a set of speakers and run the `speaker` executable.

@@ -16,8 +16,6 @@ from .utils import get_logger
 
 logger = get_logger(__name__)
 
-ZEROCONF_SERVICE_NAME = 'speaker'
-
 
 class Device:
     _DEFAULT_GRPC_PORT = 24542
@@ -132,9 +130,7 @@ class Device:
         self._grpc_server.start()
 
         # Start zeroconf
-        self._discovery = DiscoveryServer(
-            self._ip_addr,
-            self._grpc_port, ZEROCONF_SERVICE_NAME)
+        self._discovery = DiscoveryServer(self._ip_addr, self._grpc_port)
         self._discovery.start()
 
     def _stop_server(self) -> None:
