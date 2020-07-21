@@ -21,7 +21,7 @@ class Spotify(EventEmitter):
         'password': '',
         'bitrate': 160,
         'backend': 'pulseaudio',
-        'device_name': 'Speaker',
+        'device-name': 'Speaker',
         'no-daemon': None,
     }
     # Supported bitrates
