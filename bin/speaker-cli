@@ -13,10 +13,12 @@ from speaker import system_pb2, system_pb2_grpc
 from speaker.discovery import DiscoveryClient
 from speaker.device import ZEROCONF_SERVICE_NAME
 
+DEFAULT_TIMEOUT = 0.5
 
-# Custom formatter to improve help formatting
-# https://stackoverflow.com/questions/13423540/argparse-subparser-hide-metavar-in-command-listing
+
 class SubcommandHelpFormatter(argparse.RawDescriptionHelpFormatter):
+    # Custom formatter to improve help formatting
+    # https://stackoverflow.com/questions/13423540/argparse-subparser-hide-metavar-in-command-listing
     def _format_action(self, action):
         parts = super(argparse.RawDescriptionHelpFormatter,
                       self)._format_action(action)
@@ -34,7 +36,8 @@ def parse_args():
     group = parser.add_argument_group('general options')
     group.add_argument(
         '-t', '--timeout', type=float,
-        help='set initial device discovery timeout in seconds')
+        help='set initial device discovery timeout in seconds',
+        default=DEFAULT_TIMEOUT)
 
     commands = parser.add_subparsers(
         title='commands', dest='command', metavar='<command>')
@@ -186,7 +189,7 @@ class Discovery:
         self._zero_client.on('service-added', self._zero_added)
         self._zero_client.on('service-removed', self._zero_removed)
 
-    async def run(self, timeout=0.1) -> None:
+    async def run(self, timeout) -> None:
         self.devices = set()
         self._zero_client.start()
         await asyncio.sleep(timeout)
@@ -216,10 +219,7 @@ class Cli:
         func = getattr(self, self.args.command.replace('-', '_'), None)
         if func:
             discovery = Discovery()
-            if self.args.timeout:
-                await discovery.run(timeout=self.args.timeout)
-            else:
-                await discovery.run()
+            await discovery.run(timeout=self.args.timeout)
             self.devices = discovery.devices
             func()
             return True
