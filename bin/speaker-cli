@@ -46,7 +46,7 @@ def parse_args():
         'info',
         help='query information about a device')
     cparser.add_argument(
-        'device', type=str,
+        'device', type=str, nargs='?',
         help='name or UUID of the device')
 
     cparser = commands.add_parser(
