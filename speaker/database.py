@@ -23,6 +23,10 @@ class Database(redis.Redis):
     def __init__(self, db_id: int) -> None:
         super().__init__(db=db_id)
 
+    def get_bool(self, key: str) -> bool:
+        '''Get value as a bool.'''
+        return bool(self.get_int(key))
+
     def get_int(self, key: str) -> int:
         '''Get value as an int.'''
         value = self.get(key)

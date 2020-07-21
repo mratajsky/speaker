@@ -43,7 +43,7 @@ async def main(args) -> None:
 
     device = Device(host, ip_addr, args)
     try:
-        device.start()
+        await device.start()
     except Exception as e:
         await device.stop()
         logger.exception(e)

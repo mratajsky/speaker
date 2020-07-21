@@ -44,7 +44,7 @@ class Device:
     def running(self) -> bool:
         return self._running
 
-    def start(self) -> None:
+    async def start(self) -> None:
         '''Start all the device services.'''
         if self._running:
             return
@@ -54,6 +54,14 @@ class Device:
             # Speaker initialization might fail if there is nowhere
             # to output the audio
             self._speaker.start()
+            if self._spotify_start:
+                try:
+                    await self._spotify.start()
+                except Exception as e:
+                    logger.exception(e)
+                    db = get_database()
+                    db.set('spotify-start', 0)
+                    logger.warning('Automatic spotify startup disabled')
         except Exception:
             self._reader.stop()
             raise
@@ -94,9 +102,7 @@ class Device:
         self._spotify.spotifyd_opt_username = db.get_str('spotify-username')
         self._spotify.spotifyd_opt_password = db.get_str('spotify-password')
         self._spotify.spotifyd_opt_name = db.get_str('spotify-name')
-        if db.get_int('spotify-start'):
-            # Spotify remembers its running state
-            asyncio.create_task(self._spotify.start())
+        self._spotify_start = db.get_bool('spotify-start')
 
     def _start_server(self) -> None:
         # Register all services and start the gRPC server
