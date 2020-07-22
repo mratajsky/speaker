@@ -6,8 +6,7 @@ from .utils import EventEmitter, get_logger
 
 logger = get_logger(__name__)
 
-_SERVICE_NAME = 'speaker'
-_SERVICE_TYPE = '_grpc._tcp.local.'
+_SERVICE_TYPE = '_speaker1-grpc._tcp.local.'
 
 
 class DiscoveryClient(EventEmitter):
@@ -15,14 +14,9 @@ class DiscoveryClient(EventEmitter):
 
     def __init__(self) -> None:
         super().__init__()
-        self._name = _SERVICE_NAME + '.' + _SERVICE_TYPE
         self._zeroconf = Zeroconf()
         self._listener = self.ServiceListener(self)
         self._browser = None
-
-    @property
-    def name(self) -> str:
-        return self._name
 
     def start(self) -> None:
         self._browser = ServiceBrowser(self._zeroconf,
@@ -43,42 +37,39 @@ class DiscoveryClient(EventEmitter):
                 zeroconf: Zeroconf,
                 service_type: str,
                 name: str) -> None:
-            if name == self._client.name:
-                info = zeroconf.get_service_info(service_type, name)
-                if not info or not info.addresses:
-                    return
-                self._client._emit('service-added', info)
+            info = zeroconf.get_service_info(service_type, name)
+            if not info or not info.addresses:
+                return
+            self._client._emit('service-added', info)
 
         def remove_service(
                 self,
                 zeroconf: Zeroconf,
                 service_type: str,
                 name: str) -> None:
-            if name == self._client.name:
-                info = zeroconf.get_service_info(service_type, name)
-                if not info or not info.addresses:
-                    return
-                self._client._emit('service-removed', info)
+            info = zeroconf.get_service_info(service_type, name)
+            if not info or not info.addresses:
+                return
+            self._client._emit('service-removed', info)
 
         def update_service(
                 self,
                 zeroconf: Zeroconf,
                 service_type: str,
                 name: str) -> None:
-            if name == self._client.name:
-                info = zeroconf.get_service_info(service_type, name)
-                if not info or not info.addresses:
-                    return
-                self._client._emit('service-updated', info)
+            info = zeroconf.get_service_info(service_type, name)
+            if not info or not info.addresses:
+                return
+            self._client._emit('service-updated', info)
 
 
 class DiscoveryServer:
     '''Zeroconf discovery server.'''
 
-    def __init__(self, host: str, port: int) -> None:
+    def __init__(self, host: str, port: int, name: str) -> None:
         self._host = host
         self._port = port
-        self._name = _SERVICE_NAME + '.' + _SERVICE_TYPE
+        self._name = name + '.' + _SERVICE_TYPE
         self._zeroconf = None
         self._info = None
         self._registered = False

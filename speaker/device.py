@@ -28,6 +28,7 @@ class Device:
         self._grpc_port = args.grpc_port or self._DEFAULT_GRPC_PORT
         self._rtsp_port = args.rtsp_port or self._DEFAULT_RTSP_PORT
 
+        self._db = get_database()
         # Pass the actual IP address to the reader as it will be included
         # in the stream location sent to other devices
         self._reader = Reader(self._ip_addr, self._rtsp_port)
@@ -57,8 +58,7 @@ class Device:
                     await self._spotify.start()
                 except Exception as e:
                     logger.exception(e)
-                    db = get_database()
-                    db.set('spotify-start', 0)
+                    self._db.set('spotify-start', 0)
                     logger.warning('Automatic spotify startup disabled')
         except Exception:
             self._reader.stop()
@@ -83,8 +83,7 @@ class Device:
     def _init_player(self) -> None:
         self._player = Player()
         # Load the player settings
-        db = get_database()
-        self._player.location = db.get_str('playbin-location')
+        self._player.location = self._db.get_str('playbin-location')
 
     def _init_spotify(self, spotifyd_path: Optional[str]) -> None:
         self._spotify = Spotify()
@@ -92,16 +91,19 @@ class Device:
             self._spotify.spotifyd_path = spotifyd_path
 
         # Load the spotify settings
-        db = get_database()
         try:
-            value = db.get_int('spotify-bitrate')
+            value = self._db.get_int('spotify-bitrate')
             self._spotify.spotifyd_opt_bitrate = value
         except:
             pass
-        self._spotify.spotifyd_opt_username = db.get_str('spotify-username')
-        self._spotify.spotifyd_opt_password = db.get_str('spotify-password')
-        self._spotify.spotifyd_opt_name = db.get_str('spotify-name')
-        self._spotify_start = db.get_bool('spotify-start')
+        self._spotify.spotifyd_opt_username = self._db.get_str(
+            'spotify-username')
+        self._spotify.spotifyd_opt_password = self._db.get_str(
+            'spotify-password')
+        self._spotify.spotifyd_opt_name = self._db.get_str(
+            'spotify-name')
+        self._spotify_start = self._db.get_bool(
+            'spotify-start')
 
     def _start_server(self) -> None:
         # Register all services and start the gRPC server
@@ -130,7 +132,9 @@ class Device:
         self._grpc_server.start()
 
         # Start zeroconf
-        self._discovery = DiscoveryServer(self._ip_addr, self._grpc_port)
+        self._discovery = DiscoveryServer(
+            self._ip_addr, self._grpc_port,
+            self._db.get_str('ident'))
         self._discovery.start()
 
     def _stop_server(self) -> None:
