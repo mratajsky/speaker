@@ -134,7 +134,7 @@ class Spotify(EventEmitter):
             if match:
                 self._log_spotifyd_output(match.group(1), match.group(2))
             else:
-                logger.warning('spotifyd: %s', line)
+                logger.info('spotifyd: %s', line)
         self._process = None
         self._emit('stopped')
 
