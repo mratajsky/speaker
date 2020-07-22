@@ -5,6 +5,7 @@ import asyncio
 import grpc
 import socket
 import sys
+from functools import lru_cache
 from typing import List, Optional
 from zeroconf import ServiceInfo
 
@@ -214,57 +215,68 @@ class Cli:
     def __init__(self, args) -> None:
         self.args = args
 
-    async def run(self) -> bool:
+    async def run(self) -> None:
         func = getattr(self, self.args.command.replace('-', '_'), None)
         if func:
             discovery = Discovery()
             await discovery.run(timeout=self.args.timeout)
             self.devices = discovery.devices
-            func()
-            return True
-        if not func:
+            if self.devices:
+                func()
+            else:
+                print('No devices have been found on the network')
+        else:
             print(f'Command {self.args.command} is not implemented')
-            return False
 
     @staticmethod
+    @lru_cache(maxsize=5)
     def _grpc_channel(device: str):
         return grpc.insecure_channel(device)
 
-    def _get_device_channel_info(self, device: str):
+    def _get_device_info(self, device: str):
         channel = self._grpc_channel(device)
         stub = system_pb2_grpc.DeviceStub(channel)
-        return channel, stub.GetInfo(Empty())
+        return stub.GetInfo(Empty())
+
+    def _get_device_ident_name_str(self, device: str):
+        info = self._get_device_info(device)
+        return f'{info.ident}: {info.name or "<name not set>"}'
 
     def _filter_device(self, wanted: Optional[str], report_err: bool = True):
+        device, channel, info = None, None, None
         if wanted is None:
             if len(self.devices) == 1:
                 device = next(iter(self.devices))
-                channel, info = self._get_device_channel_info(device)
-                return device, channel, info
-            if report_err:
-                print('There are multiple devices available, choose one')
-            return None, None, None
-        wfolded = wanted.casefold()
-        for device in self.devices:
-            channel, info = self._get_device_channel_info(device)
-            if info.ident.casefold() == wfolded or info.name.casefold() == wfolded:
-                return device, channel, info
-        if report_err:
-            print(f'Device {wanted} not found')
-        return None, None, None
+                channel = self._grpc_channel(device)
+                info = self._get_device_info(device)
+            elif report_err:
+                print('Choose UUID or name of one of the available devices:')
+                for dev in self.devices:
+                    print(' ' + self._get_device_ident_name_str(dev))
+        else:
+            wfolded = wanted.casefold()
+            for dev in self.devices:
+                dev_channel = self._grpc_channel(dev)
+                dev_info = self._get_device_info(dev)
+                if dev_info.ident.casefold() == wfolded or dev_info.name.casefold() == wfolded:
+                    device, channel, info = dev, dev_channel, dev_info
+                    break
+            else:
+                if report_err:
+                    print(f'Device not found: {wanted}')
+        return device, channel, info
 
     def info(self) -> None:
-        _, channel, info = self._filter_device(self.args.device)
-        if channel:
-            self._print_info(channel, info)
+        device, _, _ = self._filter_device(self.args.device)
+        if device:
+            self._print_info(device)
 
     def list(self) -> None:
         for device in self.devices:
-            channel, info = self._get_device_channel_info(device)
             if self.args.info:
-                self._print_info(channel, info)
+                self._print_info(device)
             else:
-                print(f'{info.ident}: {info.name}')
+                print(self._get_device_ident_name_str(device))
 
     def name(self) -> None:
         device, channel, _ = self._filter_device(self.args.device)
@@ -484,9 +496,10 @@ class Cli:
         else:
             print(f'{device}: {response.error}')
 
-    def _print_info(self, channel, info) -> None:
-        print(f'{info.ident}: {info.name}')
+    def _print_info(self, device: str) -> None:
+        print(self._get_device_ident_name_str(device))
 
+        channel = self._grpc_channel(device)
         stub = system_pb2_grpc.SpeakerStub(channel)
         data = stub.GetStatus(Empty())
         print(f' Speaker status:')
